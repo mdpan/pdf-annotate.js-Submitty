@@ -33,21 +33,34 @@ function createEditOverlay(target) {
   let anchor = document.createElement('a');
   let parentNode = findSVGContainer(target).parentNode;
   let id = target.getAttribute('data-pdf-annotate-id');
+  let type = target.getAttribute('data-pdf-annotate-type');
+  let content = target.getAttribute('data-pdf-annotate-content');
+  let color = target.getAttribute('data-pdf-annotate-color');    
   let rect = getOffsetAnnotationRect(target);
   let styleLeft = rect.left - OVERLAY_BORDER_SIZE;
   let styleTop = rect.top - OVERLAY_BORDER_SIZE;
 
   overlay.setAttribute('id', 'pdf-annotate-edit-overlay');
   overlay.setAttribute('data-target-id', id);
+  overlay.setAttribute('data-pdf-annotate-type', type);
   overlay.style.boxSizing = 'content-box';
   overlay.style.position = 'absolute';
   overlay.style.top = `${styleTop}px`;
   overlay.style.left = `${styleLeft}px`;
-  overlay.style.width = `${rect.width}px`;
-  overlay.style.height = `${rect.height}px`;
+  if ('textbox' === type) {
+    overlay.style.background = '#fff';
+    overlay.style.width = rect.width>134 ?  rect.width + 'px' : '134px';
+    overlay.style.height = rect.height > 20 ? rect.height + 'px' : '20px';
+  } else {
+    overlay.style.width = `${rect.width}px`;
+    overlay.style.height = `${rect.height}px`;
+  }
   overlay.style.border = `${OVERLAY_BORDER_SIZE}px solid ${BORDER_COLOR}`;
   overlay.style.borderRadius = `${OVERLAY_BORDER_SIZE}px`;
   overlay.style.zIndex = 20100;
+
+  overlay.setAttribute('data-pdf-annotate-content', content);
+  overlay.setAttribute('data-pdf-annotate-color', color);
 
   anchor.innerHTML = '×';
   anchor.setAttribute('href', 'javascript://');
@@ -66,6 +79,63 @@ function createEditOverlay(target) {
   anchor.style.height = '25px';
 
   overlay.appendChild(anchor);
+
+  if ('point' === type) {
+    //var spandiv = document.createElement('div');
+    //spandiv.innerHTML = content;
+    let spantextarea = document.createElement('textarea');
+    spantextarea.setAttribute('id', id + 'textarea');
+    spantextarea.value = content;
+    spantextarea.style.position = 'absolute';
+    spantextarea.style.top = rect.height + 'px';
+    spantextarea.style.left = (rect.width - 13) + 'px';
+    spantextarea.style.background = color;
+    spantextarea.style.width = '275px';
+    spantextarea.rows = 5;
+    overlay.appendChild(spantextarea);
+
+    spantextarea.addEventListener('onfocus', inputDocumentClick);
+    spantextarea.addEventListener('change', editAnnotation);
+    spantextarea.addEventListener('click', inputDocumentClick);
+    /*
+    spandiv.style.border = '1px solid #bbb';
+    spandiv.style.color = '#000000';
+    spandiv.style.fontSize = '16px';
+    spandiv.style.padding = '2px';
+    spandiv.style.textAlign = 'left';
+    spandiv.style.textDecoration = 'none';
+    spandiv.style.position = 'absolute';
+    spandiv.style.top =rect.height + 'px';
+    spandiv.style.left = (rect.width -13) + 'px';
+    
+    overlay.appendChild(spandiv);
+    //20210209
+    spandiv.addEventListener('click', inputDocumentClick);*/
+  }
+  else if ('textbox' === type) {
+    let spaninput = document.createElement('input');
+    spaninput.setAttribute('id', id + 'input');
+    spaninput.type = 'text';
+    spaninput.style.textAlign = 'left';
+    spaninput.style.height = rect.height + 'px';
+    spaninput.value = content;
+
+
+    spaninput.style.border = '0px solid ';
+
+    let textSize = target.getAttribute('font-size');
+    spaninput.style.fontSize = textSize + 'px';
+    spaninput.style.width = rect.width > 128 ? rect.width + 'px' : '128px';
+
+    overlay.appendChild(spaninput);
+    spaninput.addEventListener('onfocus', inputDocumentClick);
+    spaninput.addEventListener('click', inputDocumentClick);
+    spaninput.addEventListener('change', editAnnotation);
+
+  } else if ('sign' === type) {
+    overlay.addEventListener('click', inputDocumentClickS);
+  }
+
   parentNode.appendChild(overlay);
   document.addEventListener('click', handleDocumentClick);
   document.addEventListener('keyup', handleDocumentKeyup);
@@ -115,8 +185,10 @@ function deleteAnnotation() {
   }
 
   let annotationId = overlay.getAttribute('data-target-id');
-  let svg = overlay.parentNode.querySelector(config.annotationSvgQuery());
-  let { documentId } = getMetadata(svg);
+  let svg = overlay.parentNode.querySelector(config.annotationSvgQuery());  
+
+  let _getMetadata = getMetadata(svg);
+  let documentId = _getMetadata.documentId;
 
   PDFJSAnnotate.getStoreAdapter().deleteAnnotation(documentId, annotationId).then(() => {
     let nodes = document.querySelectorAll(`[data-pdf-annotate-id="${annotationId}"]`);
@@ -127,6 +199,54 @@ function deleteAnnotation() {
   });
 
   destroyEditOverlay();
+  e.stopPropagation();
+}
+
+/** 20210209
+* edit annotation
+*/
+function editAnnotation() {
+  if (!overlay) {
+      return;
+  }
+  let annotationId = overlay.getAttribute('data-target-id');
+  let type = overlay.getAttribute('data-pdf-annotate-type');
+  let nodes = document.querySelectorAll('[data-pdf-annotate-id="' + annotationId + '"]');
+  let svg = overlay.parentNode.querySelector('svg.annotationLayer');
+  let val;
+  if ('textbox' === type) {
+      val = document.getElementById(annotationId + 'input').value;
+  } else {
+      val = document.getElementById(annotationId + 'textarea').value;
+  }
+
+  let _getMetadata = getMetadata(svg);
+  let documentId = _getMetadata.documentId;
+
+  [...nodes].forEach((n) => {
+      n.setAttribute('data-pdf-annotate-content', val);
+      if ('textbox' === type) {
+          n.innerHTML = val;
+      }
+  });
+
+  let promise = PDFJSAnnotate.getStoreAdapter().getAnnotation(documentId, annotationId);
+  promise.then((annotation) => {
+      annotation.content = val;
+      PDFJSAnnotate.getStoreAdapter().editAnnotation(documentId, annotationId, annotation);
+  });
+
+  destroyEditOverlay();
+}
+
+function inputDocumentClick(e) {
+  e.stopPropagation();
+}
+
+function inputDocumentClickS(e) {
+  $("#signdialogbutton").attr("sign-id", overlay.getAttribute('data-target-id'));
+  document.getElementById("signdialogbutton").click();
+  e.stopPropagation();
 }
 
 /**
@@ -194,6 +314,10 @@ function handleDocumentMousedown(e) {
   dragStartX = overlay.offsetLeft;
   dragStartY = overlay.offsetTop;
 
+  if ('textbox' !== type) {
+    overlay.style.background = 'rgba(255, 255, 255, 0.7)';
+  }
+
   overlay.style.background = 'rgba(255, 255, 255, 0.7)';
   overlay.style.cursor = 'move';
   overlay.querySelector('a').style.display = 'none';
@@ -249,7 +373,7 @@ function handleDocumentMouseup(e) {
       attribY = 'cy';
     }
 
-    if (type === 'point') {
+    if (type === 'point' || type === 'sign' || type === 'signimg') {
       // Broken
       /*
       [...target].forEach((t, i) => {
@@ -349,7 +473,10 @@ function handleDocumentMouseup(e) {
     isDragging = false;
   }, 0);
 
-  overlay.style.background = '';
+  if ('textbox' !== type) {
+    overlay.style.background = '';
+    overlay.style.background = '';
+  }
   overlay.style.cursor = '';
 
   document.removeEventListener('mousemove', handleDocumentMousemove);
